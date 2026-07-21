@@ -1,0 +1,14 @@
+bin/
+include/
+lib/
+lib64/
+.venv/
+.env
+pyvenv.cfg
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.idea/
+.vscode/
