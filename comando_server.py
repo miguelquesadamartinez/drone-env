@@ -12,22 +12,30 @@ mientras el dron esta armado, se dispara RTL automaticamente (igual
 que haria un failsafe de radio si perdieras la señal del mando).
 
 Para probar en tu PC contra SITL, sin hardware:
-    pip install fastapi uvicorn dronekit pymavlink
+    pip install fastapi uvicorn dronekit pymavlink python-dotenv
     python comando_server.py
 
 Para correr en la Raspberry con la Pixhawk real por el UART que
 cableamos (TELEM2 <-> GPIO14/15), exporta antes de arrancar:
     export DRONE_CONN=/dev/serial0:921600
     python comando_server.py
+
+Tambien puedes copiar .env.example a .env y ajustar ahi DRONE_CONN /
+DRONE_WATCHDOG_TIMEOUT; el servidor los carga automaticamente al
+arrancar (dotenv). Las variables ya exportadas en la shell siguen
+teniendo prioridad sobre las del .env.
 """
 
 import os
 import threading
 import time
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from dronekit import connect, VehicleMode
 from pymavlink import mavutil
+
+load_dotenv()
 
 # --- Configuracion ---
 DRONE_CONN = os.environ.get("DRONE_CONN", "udp:127.0.0.1:14551")
