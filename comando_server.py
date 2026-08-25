@@ -27,14 +27,24 @@ import time
 
 from fastapi import FastAPI
 from dronekit import connect, VehicleMode
+from pymavlink import mavutil
 
 # --- Configuracion ---
 DRONE_CONN = os.environ.get("DRONE_CONN", "udp:127.0.0.1:14551")
 WATCHDOG_TIMEOUT = float(os.environ.get("DRONE_WATCHDOG_TIMEOUT", "5"))
 MAX_ESPERA_SEGUNDOS = 180  # tope de seguridad para no bloquear un hilo para siempre
 
+# Prueba de motores en banco: sube muy poco a poco y nunca pasa de este tope.
+NUM_MOTORES = 4
+MOTOR_TEST_MAX_PORCENTAJE = 15
+MOTOR_TEST_PASO = 1
+MOTOR_TEST_INTERVALO_SEGUNDOS = 1.5
+MOTOR_TEST_COMANDO_TIMEOUT = 3  # si no se refresca en este tiempo, el motor para solo
+
 # --- Estado compartido entre hilos ---
 abort_event = threading.Event()
+motor_test_stop = threading.Event()
+motor_test_running = False
 last_ping = time.time()
 
 print(f"Conectando al vehiculo en {DRONE_CONN} ...")
@@ -97,6 +107,38 @@ def _rtl() -> None:
     vehicle.mode = VehicleMode("RTL")
 
 
+def _enviar_motor_test(motor_instance: int, porcentaje: float, duracion: float) -> None:
+    msg = vehicle.message_factory.command_long_encode(
+        0, 0,
+        mavutil.mavlink.MAV_CMD_DO_MOTOR_TEST,
+        0,
+        motor_instance,
+        mavutil.mavlink.MOTOR_TEST_THROTTLE_PERCENT,
+        porcentaje,
+        duracion,
+        0, 0, 0)
+    vehicle.send_mavlink(msg)
+
+
+def _rampa_motores() -> None:
+    """Sube el throttle de los NUM_MOTORES motores muy poco a poco hasta
+    MOTOR_TEST_MAX_PORCENTAJE y se mantiene ahi hasta que se pida parar."""
+    global motor_test_running
+    motor_test_running = True
+    motor_test_stop.clear()
+    porcentaje = 0
+    while not motor_test_stop.is_set():
+        porcentaje = min(porcentaje + MOTOR_TEST_PASO, MOTOR_TEST_MAX_PORCENTAJE)
+        for motor in range(1, NUM_MOTORES + 1):
+            _enviar_motor_test(motor, porcentaje, MOTOR_TEST_COMANDO_TIMEOUT)
+        print(f"Prueba de motores: {porcentaje}%")
+        time.sleep(MOTOR_TEST_INTERVALO_SEGUNDOS)
+    for motor in range(1, NUM_MOTORES + 1):
+        _enviar_motor_test(motor, 0, 1)
+    motor_test_running = False
+    print("Prueba de motores: parada.")
+
+
 def _watchdog() -> None:
     global last_ping
     while True:
@@ -142,8 +184,23 @@ def parada_emergencia():
     libre) - fuerza un aterrizaje controlado ya mismo.
     """
     abort_event.set()
+    motor_test_stop.set()
     vehicle.mode = VehicleMode("LAND")
     return {"status": "parada_emergencia: aterrizando ya"}
+
+
+@app.post("/motor_test/iniciar")
+def motor_test_iniciar():
+    if motor_test_running:
+        return {"status": "ya_en_marcha"}
+    threading.Thread(target=_rampa_motores, daemon=True).start()
+    return {"status": "prueba_motores_iniciada"}
+
+
+@app.post("/motor_test/detener")
+def motor_test_detener():
+    motor_test_stop.set()
+    return {"status": "prueba_motores_detenida"}
 
 
 @app.get("/telemetria")
