@@ -12,30 +12,22 @@ mientras el dron esta armado, se dispara RTL automaticamente (igual
 que haria un failsafe de radio si perdieras la señal del mando).
 
 Para probar en tu PC contra SITL, sin hardware:
-    pip install fastapi uvicorn dronekit pymavlink python-dotenv
+    pip install fastapi uvicorn dronekit pymavlink
     python comando_server.py
 
 Para correr en la Raspberry con la Pixhawk real por el UART que
 cableamos (TELEM2 <-> GPIO14/15), exporta antes de arrancar:
     export DRONE_CONN=/dev/serial0:921600
     python comando_server.py
-
-Tambien puedes copiar .env.example a .env y ajustar ahi DRONE_CONN /
-DRONE_WATCHDOG_TIMEOUT; el servidor los carga automaticamente al
-arrancar (dotenv). Las variables ya exportadas en la shell siguen
-teniendo prioridad sobre las del .env.
 """
 
 import os
 import threading
 import time
 
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from dronekit import connect, VehicleMode
 from pymavlink import mavutil
-
-load_dotenv()
 
 # --- Configuracion ---
 DRONE_CONN = os.environ.get("DRONE_CONN", "udp:127.0.0.1:14551")
@@ -49,10 +41,17 @@ MOTOR_TEST_PASO = 1
 MOTOR_TEST_INTERVALO_SEGUNDOS = 1.5
 MOTOR_TEST_COMANDO_TIMEOUT = 3  # si no se refresca en este tiempo, el motor para solo
 
+# Movimiento en GUIDED: velocidad de avance/retroceso y de giro por defecto.
+MOVER_VELOCIDAD = 2.0       # m/s
+MOVER_YAW_RATE = 0.5        # rad/s
+MOVER_REFRESCO_SEGUNDOS = 0.3  # se reenvia el comando mientras se mantenga pulsado
+
 # --- Estado compartido entre hilos ---
 abort_event = threading.Event()
 motor_test_stop = threading.Event()
 motor_test_running = False
+mover_lock = threading.Lock()
+mover_id = 0
 last_ping = time.time()
 
 print(f"Conectando al vehiculo en {DRONE_CONN} ...")
@@ -113,6 +112,30 @@ def _aterrizar() -> None:
 
 def _rtl() -> None:
     vehicle.mode = VehicleMode("RTL")
+
+
+def _enviar_velocidad(vx: float, yaw_rate: float) -> None:
+    msg = vehicle.message_factory.set_position_target_local_ned_encode(
+        0, 0, 0,
+        mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+        0b0000011111000111,  # usa vx, vy, vz y yaw_rate; ignora posicion, aceleracion y yaw absoluto
+        0, 0, 0,
+        vx, 0, 0,
+        0, 0, 0,
+        0, yaw_rate)
+    vehicle.send_mavlink(msg)
+
+
+def _mover_continuo(vx: float, yaw_rate: float, my_id: int) -> None:
+    """Reenvia el comando de velocidad mientras siga siendo el movimiento
+    activo. En cuanto se pide otro movimiento o parar, se frena solo."""
+    while True:
+        with mover_lock:
+            if mover_id != my_id:
+                break
+        _enviar_velocidad(vx, yaw_rate)
+        time.sleep(MOVER_REFRESCO_SEGUNDOS)
+    _enviar_velocidad(0, 0)
 
 
 def _enviar_motor_test(motor_instance: int, porcentaje: float, duracion: float) -> None:
@@ -184,6 +207,24 @@ def rtl():
     return {"status": "rtl"}
 
 
+@app.post("/mover")
+def mover(vx: float = 0.0, yaw_rate: float = 0.0):
+    global mover_id
+    with mover_lock:
+        mover_id += 1
+        my_id = mover_id
+    threading.Thread(target=_mover_continuo, args=(vx, yaw_rate, my_id), daemon=True).start()
+    return {"status": "moviendo", "vx": vx, "yaw_rate": yaw_rate}
+
+
+@app.post("/parar_movimiento")
+def parar_movimiento():
+    global mover_id
+    with mover_lock:
+        mover_id += 1
+    return {"status": "movimiento_detenido"}
+
+
 @app.post("/parada_emergencia")
 def parada_emergencia():
     """
@@ -191,8 +232,11 @@ def parada_emergencia():
     maniobra en curso. NO desarma en el aire (eso seria una caida
     libre) - fuerza un aterrizaje controlado ya mismo.
     """
+    global mover_id
     abort_event.set()
     motor_test_stop.set()
+    with mover_lock:
+        mover_id += 1
     vehicle.mode = VehicleMode("LAND")
     return {"status": "parada_emergencia: aterrizando ya"}
 
@@ -219,6 +263,7 @@ def telemetria():
         "altitud": vehicle.location.global_relative_frame.alt,
         "bateria_voltaje": vehicle.battery.voltage if vehicle.battery else None,
         "gps_fix": vehicle.gps_0.fix_type if vehicle.gps_0 else None,
+        "satelites": vehicle.gps_0.satellites_visible if vehicle.gps_0 else None,
     }
 
 
