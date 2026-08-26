@@ -11,14 +11,17 @@ app deja de mandar /ping durante mas de WATCHDOG_TIMEOUT segundos
 mientras el dron esta armado, se dispara RTL automaticamente (igual
 que haria un failsafe de radio si perdieras la señal del mando).
 
+La configuracion (DRONE_CONN, DRONE_WATCHDOG_TIMEOUT) se lee del
+archivo ".env" en este mismo directorio (copia ".env.example" y
+ajustalo). Si no existe ".env", se usan los valores por defecto.
+
 Para probar en tu PC contra SITL, sin hardware:
-    pip install fastapi uvicorn dronekit pymavlink
+    pip install fastapi uvicorn dronekit pymavlink python-dotenv
     python comando_server.py
 
 Para correr en la Raspberry con la Pixhawk real por el UART que
-cableamos (TELEM2 <-> GPIO14/15), exporta antes de arrancar:
-    export DRONE_CONN=/dev/serial0:921600
-    python comando_server.py
+cableamos (TELEM2 <-> GPIO14/15), pon en ".env":
+    DRONE_CONN=/dev/serial0:921600
 """
 
 import collections
@@ -33,9 +36,12 @@ import time
 if not hasattr(collections, "MutableMapping"):
     collections.MutableMapping = collections.abc.MutableMapping
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from dronekit import connect, VehicleMode
 from pymavlink import mavutil
+
+load_dotenv()
 
 # --- Configuracion ---
 DRONE_CONN = os.environ.get("DRONE_CONN", "udp:127.0.0.1:14551")
@@ -50,7 +56,7 @@ MOTOR_TEST_INTERVALO_SEGUNDOS = 1.5
 MOTOR_TEST_COMANDO_TIMEOUT = 3  # si no se refresca en este tiempo, el motor para solo
 
 # Movimiento en GUIDED: velocidad de avance/retroceso y de giro por defecto.
-MOVER_VELOCIDAD = 2.0       # m/s
+MOVER_VELOCIDAD = 1.0       # m/s
 MOVER_YAW_RATE = 0.5        # rad/s
 MOVER_REFRESCO_SEGUNDOS = 0.3  # se reenvia el comando mientras se mantenga pulsado
 
