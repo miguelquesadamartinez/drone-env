@@ -21,9 +21,17 @@ cableamos (TELEM2 <-> GPIO14/15), exporta antes de arrancar:
     python comando_server.py
 """
 
+import collections
+import collections.abc
 import os
 import threading
 import time
+
+# Parche: dronekit usa collections.MutableMapping, que Python quito de
+# collections (ahora esta en collections.abc) desde la 3.10. Sin esto,
+# el import de dronekit falla en Python 3.10+.
+if not hasattr(collections, "MutableMapping"):
+    collections.MutableMapping = collections.abc.MutableMapping
 
 from fastapi import FastAPI
 from dronekit import connect, VehicleMode
