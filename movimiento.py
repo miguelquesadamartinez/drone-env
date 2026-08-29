@@ -51,22 +51,22 @@ arm_and_takeoff(1)
 time.sleep(2)
 
 print("Moviendo adelante...")
-mover(2, 0, 0, 5)
+mover(2, 0, 0, 2)
 
 print("Moviendo atras...")
-mover(-2, 0, 0, 5)
+mover(-2, 0, 0, 2)
 
 print("Moviendo derecha...")
-mover(0, 2, 0, 5)
+mover(0, 2, 0, 2)
 
 print("Moviendo izquierda...")
-mover(0, -2, 0, 5)
+mover(0, -2, 0, 2)
 
 print("Subiendo...")
-mover(0, 0, -2, 3)
+mover(0, 0, -2, 2)
 
 print("Bajando...")
-mover(0, 0, 2, 3)
+mover(0, 0, 2, 2)
 
 print("Aterrizando...")
 vehicle.mode = VehicleMode("LAND")
