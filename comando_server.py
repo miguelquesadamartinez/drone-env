@@ -27,6 +27,8 @@ cableamos (TELEM2 <-> GPIO14/15), pon en ".env":
 import collections
 import collections.abc
 import os
+import subprocess
+import sys
 import threading
 import time
 
@@ -37,7 +39,7 @@ if not hasattr(collections, "MutableMapping"):
     collections.MutableMapping = collections.abc.MutableMapping
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from dronekit import connect, VehicleMode
 from pymavlink import mavutil
 
@@ -60,6 +62,15 @@ MOVER_VELOCIDAD = 1.0       # m/s
 MOVER_YAW_RATE = 0.5        # rad/s
 MOVER_REFRESCO_SEGUNDOS = 0.3  # se reenvia el comando mientras se mantenga pulsado
 
+# Scripts de drone-env que la app puede lanzar como proceso aparte.
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPTS_DISPONIBLES = {
+    "movimiento": "movimiento.py",
+    "mision": "mision.py",
+    "deteccion_personas": "deteccion_personas_ai.py",
+}
+LOG_MAX_LINEAS = 5
+
 # --- Estado compartido entre hilos ---
 abort_event = threading.Event()
 motor_test_stop = threading.Event()
@@ -67,6 +78,10 @@ motor_test_running = False
 mover_lock = threading.Lock()
 mover_id = 0
 last_ping = time.time()
+log_lines = collections.deque(maxlen=LOG_MAX_LINEAS)
+log_lock = threading.Lock()
+proceso_actual = None
+proceso_lock = threading.Lock()
 
 print(f"Conectando al vehiculo en {DRONE_CONN} ...")
 if DRONE_CONN.startswith("/dev/") and ":" in DRONE_CONN:
@@ -184,6 +199,18 @@ def _rampa_motores() -> None:
     print("Prueba de motores: parada.")
 
 
+def _leer_salida_proceso(proceso: subprocess.Popen) -> None:
+    """Va guardando cada linea que imprime el script lanzado, hasta que
+    termina. Solo se quedan las ultimas LOG_MAX_LINEAS."""
+    global proceso_actual
+    for linea in proceso.stdout:
+        with log_lock:
+            log_lines.append(linea.rstrip())
+    with proceso_lock:
+        if proceso_actual is proceso:
+            proceso_actual = None
+
+
 def _watchdog() -> None:
     global last_ping
     while True:
@@ -239,18 +266,57 @@ def parar_movimiento():
     return {"status": "movimiento_detenido"}
 
 
+@app.post("/ejecutar_script")
+def ejecutar_script(nombre: str):
+    global proceso_actual
+    if nombre not in SCRIPTS_DISPONIBLES:
+        raise HTTPException(status_code=404, detail="Script desconocido")
+    with proceso_lock:
+        if proceso_actual is not None and proceso_actual.poll() is None:
+            return {"status": "ya_en_marcha"}
+        ruta = os.path.join(SCRIPTS_DIR, SCRIPTS_DISPONIBLES[nombre])
+        proceso_actual = subprocess.Popen(
+            [sys.executable, ruta],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, cwd=SCRIPTS_DIR)
+        proceso = proceso_actual
+    threading.Thread(target=_leer_salida_proceso, args=(proceso,), daemon=True).start()
+    return {"status": "ejecutando", "script": nombre}
+
+
+@app.post("/detener_script")
+def detener_script():
+    global proceso_actual
+    with proceso_lock:
+        if proceso_actual is not None and proceso_actual.poll() is None:
+            proceso_actual.terminate()
+        proceso_actual = None
+    return {"status": "script_detenido"}
+
+
+@app.get("/logs")
+def logs():
+    with log_lock:
+        return {"lineas": list(log_lines)}
+
+
 @app.post("/parada_emergencia")
 def parada_emergencia():
     """
     Entra en LAND inmediatamente e interrumpe cualquier despegue o
     maniobra en curso. NO desarma en el aire (eso seria una caida
-    libre) - fuerza un aterrizaje controlado ya mismo.
+    libre) - fuerza un aterrizaje controlado ya mismo. Tambien corta
+    cualquier script (movimiento/mision/deteccion) que estuviera corriendo.
     """
-    global mover_id
+    global mover_id, proceso_actual
     abort_event.set()
     motor_test_stop.set()
     with mover_lock:
         mover_id += 1
+    with proceso_lock:
+        if proceso_actual is not None and proceso_actual.poll() is None:
+            proceso_actual.terminate()
+        proceso_actual = None
     vehicle.mode = VehicleMode("LAND")
     return {"status": "parada_emergencia: aterrizando ya"}
 
