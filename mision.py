@@ -54,7 +54,7 @@ waypoints = [
 ]
 
 # Despegar
-arm_and_takeoff(10)
+arm_and_takeoff(1)
 time.sleep(2)
 
 # Ejecutar mision

@@ -72,7 +72,7 @@ python3 despegar.py
   
 **Secuencia:**
 1. Arma los motores
-2. Sube a 5 metros
+2. Sube a 1 metro
 3. Sostiene posición 10 segundos
 4. Desciende y aterriza
 5. Desarma motores

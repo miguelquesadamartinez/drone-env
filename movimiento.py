@@ -46,8 +46,8 @@ def mover(vx, vy, vz, duracion):
         vehicle.send_mavlink(msg)
         time.sleep(1)
 
-# Despegar a 10 metros
-arm_and_takeoff(10)
+# Despegar a 1 metro
+arm_and_takeoff(1)
 time.sleep(2)
 
 print("Moviendo adelante...")

@@ -204,7 +204,7 @@ def ping():
 
 
 @app.post("/despegar")
-def despegar(altitud: float = 5.0):
+def despegar(altitud: float = 1.0):
     threading.Thread(target=_armar_y_despegar, args=(altitud,), daemon=True).start()
     return {"status": "despegando", "altitud": altitud}
 
