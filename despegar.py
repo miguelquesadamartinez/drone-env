@@ -29,7 +29,7 @@ def arm_and_takeoff(target_altitude):
             break
         time.sleep(1)
 
-arm_and_takeoff(5)
+arm_and_takeoff(1)
 
 print("Manteniendo posicion 10 segundos...")
 time.sleep(10)

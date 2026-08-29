@@ -61,7 +61,7 @@ python3 telemetria.py
 ---
 
 #### 🚁 **despegar.py** — Despegar, sostener y aterrizar
-Script simple: despega 5 metros, aguanta 10 segundos y aterriza.
+Script simple: despega 1 metro, aguanta 10 segundos y aterriza.
 
 ```bash
 python3 despegar.py
