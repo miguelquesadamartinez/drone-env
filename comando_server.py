@@ -109,6 +109,16 @@ else:
     vehicle = connect(DRONE_CONN, wait_ready=True, heartbeat_timeout=60)
 _log("Vehiculo conectado.")
 
+
+@vehicle.on_message("STATUSTEXT")
+def _log_statustext_pixhawk(_self, _name, message) -> None:
+    # Aqui llegan los avisos que manda la propia Pixhawk por MAVLink: los
+    # PreArm (RC not found, Safety Switch, EKF, compass...) y el motivo real
+    # de un rechazo al armar. Sin esto, solo veriamos el timeout generico de
+    # dronekit ("no se pudo armar a tiempo") sin saber la causa - con esto
+    # queda igual de visible aqui que en una segunda GCS tipo Mission Planner.
+    _log(f"PIXHAWK: {message.text}")
+
 app = FastAPI()
 
 
@@ -385,10 +395,12 @@ if __name__ == "__main__":
 
     class _FiltroRutasSilenciosas(logging.Filter):
         """Oculta del log de acceso de uvicorn las peticiones de sondeo
-        (ping/logs), que llegan cada 2s desde la app y solo hacen ruido en
-        la terminal. El resto de peticiones (despegar, mover, etc.) se
-        siguen viendo aqui, ademas de quedar en /logs para la app."""
-        RUTAS_SILENCIADAS = ("/ping", "/logs")
+        (ping/logs/telemetria), que llegan cada 2s desde la app y solo hacen
+        ruido en la terminal, tapando mensajes importantes (por ejemplo, los
+        de dronekit cuando falla un armado). El resto de peticiones
+        (despegar, mover, etc.) se siguen viendo aqui, ademas de quedar en
+        /logs para la app."""
+        RUTAS_SILENCIADAS = ("/ping", "/logs", "/telemetria")
 
         def filter(self, record: logging.LogRecord) -> bool:
             mensaje = record.getMessage()
