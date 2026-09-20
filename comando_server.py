@@ -57,10 +57,11 @@ MOTOR_TEST_PASO = 1
 MOTOR_TEST_INTERVALO_SEGUNDOS = 1.5
 MOTOR_TEST_COMANDO_TIMEOUT = 3  # si no se refresca en este tiempo, el motor para solo
 
-# Movimiento en GUIDED: velocidad de avance/retroceso y de giro por defecto.
-MOVER_VELOCIDAD = 1.0       # m/s
-MOVER_YAW_RATE = 0.5        # rad/s
-MOVER_REFRESCO_SEGUNDOS = 0.3  # se reenvia el comando mientras se mantenga pulsado
+# Movimiento en GUIDED: velocidad de avance/retroceso, vertical y de giro por defecto.
+MOVER_VELOCIDAD = 1.0            # m/s (horizontal)
+MOVER_VELOCIDAD_VERTICAL = 0.5   # m/s (subir/bajar, mas conservador que horizontal)
+MOVER_YAW_RATE = 0.5             # rad/s
+MOVER_REFRESCO_SEGUNDOS = 0.3    # se reenvia el comando mientras se mantenga pulsado
 
 # Scripts de drone-env que la app puede lanzar como proceso aparte.
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -69,7 +70,12 @@ SCRIPTS_DISPONIBLES = {
     "mision": "mision.py",
     "deteccion_personas": "deteccion_personas_ai.py",
 }
-LOG_MAX_LINEAS = 5
+# Antes esto solo guardaba la salida de los scripts lanzados (movimiento/
+# mision/deteccion), por eso el panel de la app se quedaba siempre vacio
+# si no pulsabas esos botones en concreto. Ahora tambien se registran aqui
+# las ordenes normales (despegar, aterrizar, mover...), asi que subimos el
+# limite para que quepa mas historial.
+LOG_MAX_LINEAS = 20
 
 # --- Estado compartido entre hilos ---
 abort_event = threading.Event()
@@ -83,13 +89,25 @@ log_lock = threading.Lock()
 proceso_actual = None
 proceso_lock = threading.Lock()
 
+
+def _log(mensaje: str) -> None:
+    """Guarda una linea con hora en el registro que lee la app (endpoint
+    /logs) y la imprime tambien por consola. No se usa para /ping ni
+    /telemetria porque esos se sondean cada 2s y lo unico que harian es
+    desplazar del historial las ordenes de verdad."""
+    linea = f"[{time.strftime('%H:%M:%S')}] {mensaje}"
+    with log_lock:
+        log_lines.append(linea)
+    print(linea)
+
+
 print(f"Conectando al vehiculo en {DRONE_CONN} ...")
 if DRONE_CONN.startswith("/dev/") and ":" in DRONE_CONN:
     _path, _baud = DRONE_CONN.rsplit(":", 1)
     vehicle = connect(_path, baud=int(_baud), wait_ready=True, heartbeat_timeout=60)
 else:
     vehicle = connect(DRONE_CONN, wait_ready=True, heartbeat_timeout=60)
-print("Vehiculo conectado.")
+_log("Vehiculo conectado.")
 
 app = FastAPI()
 
@@ -100,7 +118,7 @@ def _armar_y_despegar(target_altitude: float) -> None:
 
     while not vehicle.is_armable:
         if abort_event.is_set() or (time.time() - inicio) > MAX_ESPERA_SEGUNDOS:
-            print("Despegue cancelado: no se pudo armar a tiempo.")
+            _log("Despegue cancelado: no se pudo armar a tiempo.")
             return
         time.sleep(1)
 
@@ -108,7 +126,7 @@ def _armar_y_despegar(target_altitude: float) -> None:
     vehicle.armed = True
     while not vehicle.armed:
         if abort_event.is_set() or (time.time() - inicio) > MAX_ESPERA_SEGUNDOS:
-            print("Despegue cancelado: no se pudo armar a tiempo.")
+            _log("Despegue cancelado: no se pudo armar a tiempo.")
             return
         time.sleep(1)
 
@@ -116,14 +134,14 @@ def _armar_y_despegar(target_altitude: float) -> None:
 
     while True:
         if abort_event.is_set():
-            print("Despegue interrumpido (parada de emergencia u otra orden).")
+            _log("Despegue interrumpido (parada de emergencia u otra orden).")
             return
         if (time.time() - inicio) > MAX_ESPERA_SEGUNDOS:
-            print("Despegue cancelado: tardo demasiado en alcanzar altitud.")
+            _log("Despegue cancelado: tardo demasiado en alcanzar altitud.")
             return
         alt = vehicle.location.global_relative_frame.alt
         if alt >= target_altitude * 0.95:
-            print("Altitud objetivo alcanzada.")
+            _log("Altitud objetivo alcanzada.")
             return
         time.sleep(1)
 
@@ -133,7 +151,7 @@ def _aterrizar() -> None:
     inicio = time.time()
     while vehicle.location.global_relative_frame.alt > 0.5:
         if (time.time() - inicio) > MAX_ESPERA_SEGUNDOS:
-            print("Aviso: LAND tarda mas de lo esperado, sigue en curso.")
+            _log("Aviso: LAND tarda mas de lo esperado, sigue en curso.")
             break
         time.sleep(1)
     vehicle.armed = False
@@ -143,28 +161,33 @@ def _rtl() -> None:
     vehicle.mode = VehicleMode("RTL")
 
 
-def _enviar_velocidad(vx: float, yaw_rate: float) -> None:
+def _enviar_velocidad(vx: float, vz: float, yaw_rate: float) -> None:
+    # OJO: en el frame NED (Norte-Este-Abajo) que usa esta llamada, el eje Z
+    # apunta hacia ABAJO. Por eso vz POSITIVO es bajar y vz NEGATIVO es subir
+    # (justo al reves de lo que uno esperaria a primera vista). Los endpoints
+    # de mas abajo ya aplican el signo correcto, no hace falta pensarlo fuera
+    # de esta funcion.
     msg = vehicle.message_factory.set_position_target_local_ned_encode(
         0, 0, 0,
         mavutil.mavlink.MAV_FRAME_LOCAL_NED,
         0b0000011111000111,  # usa vx, vy, vz y yaw_rate; ignora posicion, aceleracion y yaw absoluto
         0, 0, 0,
-        vx, 0, 0,
+        vx, 0, vz,
         0, 0, 0,
         0, yaw_rate)
     vehicle.send_mavlink(msg)
 
 
-def _mover_continuo(vx: float, yaw_rate: float, my_id: int) -> None:
+def _mover_continuo(vx: float, vz: float, yaw_rate: float, my_id: int) -> None:
     """Reenvia el comando de velocidad mientras siga siendo el movimiento
     activo. En cuanto se pide otro movimiento o parar, se frena solo."""
     while True:
         with mover_lock:
             if mover_id != my_id:
                 break
-        _enviar_velocidad(vx, yaw_rate)
+        _enviar_velocidad(vx, vz, yaw_rate)
         time.sleep(MOVER_REFRESCO_SEGUNDOS)
-    _enviar_velocidad(0, 0)
+    _enviar_velocidad(0, 0, 0)
 
 
 def _enviar_motor_test(motor_instance: int, porcentaje: float, duracion: float) -> None:
@@ -191,12 +214,12 @@ def _rampa_motores() -> None:
         porcentaje = min(porcentaje + MOTOR_TEST_PASO, MOTOR_TEST_MAX_PORCENTAJE)
         for motor in range(1, NUM_MOTORES + 1):
             _enviar_motor_test(motor, porcentaje, MOTOR_TEST_COMANDO_TIMEOUT)
-        print(f"Prueba de motores: {porcentaje}%")
+        _log(f"Prueba de motores: {porcentaje}%")
         time.sleep(MOTOR_TEST_INTERVALO_SEGUNDOS)
     for motor in range(1, NUM_MOTORES + 1):
         _enviar_motor_test(motor, 0, 1)
     motor_test_running = False
-    print("Prueba de motores: parada.")
+    _log("Prueba de motores: parada.")
 
 
 def _leer_salida_proceso(proceso: subprocess.Popen) -> None:
@@ -216,7 +239,7 @@ def _watchdog() -> None:
     while True:
         time.sleep(1)
         if vehicle.armed and (time.time() - last_ping) > WATCHDOG_TIMEOUT:
-            print(f"WATCHDOG: sin señal de la app hace mas de {WATCHDOG_TIMEOUT}s, forzando RTL")
+            _log(f"WATCHDOG: sin señal de la app hace mas de {WATCHDOG_TIMEOUT}s, forzando RTL")
             _rtl()
 
 
@@ -232,30 +255,34 @@ def ping():
 
 @app.post("/despegar")
 def despegar(altitud: float = 1.0):
+    _log(f"Orden: despegar (altitud={altitud} m)")
     threading.Thread(target=_armar_y_despegar, args=(altitud,), daemon=True).start()
     return {"status": "despegando", "altitud": altitud}
 
 
 @app.post("/aterrizar")
 def aterrizar():
+    _log("Orden: aterrizar")
     threading.Thread(target=_aterrizar, daemon=True).start()
     return {"status": "aterrizando"}
 
 
 @app.post("/rtl")
 def rtl():
+    _log("Orden: RTL")
     _rtl()
     return {"status": "rtl"}
 
 
 @app.post("/mover")
-def mover(vx: float = 0.0, yaw_rate: float = 0.0):
+def mover(vx: float = 0.0, vz: float = 0.0, yaw_rate: float = 0.0):
     global mover_id
+    _log(f"Orden: mover (vx={vx}, vz={vz}, yaw_rate={yaw_rate})")
     with mover_lock:
         mover_id += 1
         my_id = mover_id
-    threading.Thread(target=_mover_continuo, args=(vx, yaw_rate, my_id), daemon=True).start()
-    return {"status": "moviendo", "vx": vx, "yaw_rate": yaw_rate}
+    threading.Thread(target=_mover_continuo, args=(vx, vz, yaw_rate, my_id), daemon=True).start()
+    return {"status": "moviendo", "vx": vx, "vz": vz, "yaw_rate": yaw_rate}
 
 
 @app.post("/parar_movimiento")
@@ -274,6 +301,7 @@ def ejecutar_script(nombre: str):
     with proceso_lock:
         if proceso_actual is not None and proceso_actual.poll() is None:
             return {"status": "ya_en_marcha"}
+        _log(f"Orden: ejecutar script '{nombre}'")
         ruta = os.path.join(SCRIPTS_DIR, SCRIPTS_DISPONIBLES[nombre])
         proceso_actual = subprocess.Popen(
             [sys.executable, ruta],
@@ -287,6 +315,7 @@ def ejecutar_script(nombre: str):
 @app.post("/detener_script")
 def detener_script():
     global proceso_actual
+    _log("Orden: detener script")
     with proceso_lock:
         if proceso_actual is not None and proceso_actual.poll() is None:
             proceso_actual.terminate()
@@ -309,6 +338,7 @@ def parada_emergencia():
     cualquier script (movimiento/mision/deteccion) que estuviera corriendo.
     """
     global mover_id, proceso_actual
+    _log("PARADA DE EMERGENCIA: aterrizando ya")
     abort_event.set()
     motor_test_stop.set()
     with mover_lock:
@@ -325,12 +355,14 @@ def parada_emergencia():
 def motor_test_iniciar():
     if motor_test_running:
         return {"status": "ya_en_marcha"}
+    _log("Orden: iniciar prueba de motores")
     threading.Thread(target=_rampa_motores, daemon=True).start()
     return {"status": "prueba_motores_iniciada"}
 
 
 @app.post("/motor_test/detener")
 def motor_test_detener():
+    _log("Orden: detener prueba de motores")
     motor_test_stop.set()
     return {"status": "prueba_motores_detenida"}
 
@@ -348,5 +380,20 @@ def telemetria():
 
 
 if __name__ == "__main__":
+    import logging
     import uvicorn
+
+    class _FiltroRutasSilenciosas(logging.Filter):
+        """Oculta del log de acceso de uvicorn las peticiones de sondeo
+        (ping/logs), que llegan cada 2s desde la app y solo hacen ruido en
+        la terminal. El resto de peticiones (despegar, mover, etc.) se
+        siguen viendo aqui, ademas de quedar en /logs para la app."""
+        RUTAS_SILENCIADAS = ("/ping", "/logs")
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            mensaje = record.getMessage()
+            return not any(ruta in mensaje for ruta in self.RUTAS_SILENCIADAS)
+
+    logging.getLogger("uvicorn.access").addFilter(_FiltroRutasSilenciosas())
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
