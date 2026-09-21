@@ -52,6 +52,13 @@ def _lanzar_ffmpeg() -> subprocess.Popen:
     siempre sin tocar su configuracion."""
     comando = [
         "ffmpeg", "-y",
+        # Sin esto, ffmpeg suelta un banner enorme con su configuracion de
+        # compilacion y luego un contador de progreso que se reescribe con
+        # \r en la misma linea de la terminal - se mezcla visualmente con
+        # nuestros propios print() (p.ej. "Personas detectadas: 118.0" no
+        # eran 118 personas, era esto solapandose). Con "warning" seguimos
+        # viendo avisos/errores reales (p.ej. si no puede conectar al RTSP).
+        "-hide_banner", "-loglevel", "warning", "-nostats",
         "-use_wallclock_as_timestamps", "1",
         "-f", "rawvideo", "-pixel_format", "bgr24",
         "-video_size", f"{ANCHO}x{ALTO}", "-framerate", str(FPS_OBJETIVO),
