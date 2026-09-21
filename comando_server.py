@@ -64,11 +64,13 @@ MOVER_YAW_RATE = 0.5             # rad/s
 MOVER_REFRESCO_SEGUNDOS = 0.3    # se reenvia el comando mientras se mantenga pulsado
 
 # Scripts de drone-env que la app puede lanzar como proceso aparte.
+# deteccion_personas_ai.py YA NO va aqui: paso a ser el pipeline de
+# streaming permanente (systemd), no un script que se lanza bajo
+# demanda - ver el propio fichero para el detalle.
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS_DISPONIBLES = {
     "movimiento": "movimiento.py",
     "mision": "mision.py",
-    "deteccion_personas": "deteccion_personas_ai.py",
 }
 # Antes esto solo guardaba la salida de los scripts lanzados (movimiento/
 # mision/deteccion), por eso el panel de la app se quedaba siempre vacio
