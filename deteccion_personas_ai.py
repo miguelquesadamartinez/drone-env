@@ -64,6 +64,7 @@ def _lanzar_ffmpeg() -> subprocess.Popen:
         "-video_size", f"{ANCHO}x{ALTO}", "-framerate", str(FPS_OBJETIVO),
         "-i", "-",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-g", str(FPS_OBJETIVO), "-keyint_min", str(FPS_OBJETIVO), "-sc_threshold", "0",
         "-pix_fmt", "yuv420p",
         "-f", "rtsp", RTSP_URL,
     ]
