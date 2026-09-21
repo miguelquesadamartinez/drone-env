@@ -77,8 +77,16 @@ def main() -> None:
     picam2 = Picamera2(imx500.camera_num)
     config = picam2.create_preview_configuration(
         main={"size": (ANCHO, ALTO)},
-        controls={"FrameRate": 30},
-        buffer_count=12,
+        # OJO: esto es la causa del minuto de retraso. La camara estaba
+        # capturando a 30fps con sitio para 12 fotogramas en cola, pero
+        # solo consumiamos ~10fps (o menos, si la inferencia+dibujo iba
+        # justa) - la cola se iba llenando de fotogramas cada vez mas
+        # viejos y nunca se vaciaba, así que el retraso solo podia crecer
+        # con el tiempo. Ahora la camara captura al mismo ritmo que
+        # procesamos (no mas rapido) y la cola es minima, para que no
+        # haya donde acumular fotogramas atrasados.
+        controls={"FrameRate": FPS_OBJETIVO},
+        buffer_count=2,
     )
     picam2.configure(config)
 
@@ -90,6 +98,7 @@ def main() -> None:
     print("Deteccion de personas + streaming iniciados (IMX500 -> RTSP -> MediaMTX).")
 
     intervalo = 1.0 / FPS_OBJETIVO
+    fotogramas_lentos_seguidos = 0
     try:
         while True:
             inicio = time.time()
@@ -139,6 +148,15 @@ def main() -> None:
             resto = intervalo - (time.time() - inicio)
             if resto > 0:
                 time.sleep(resto)
+                fotogramas_lentos_seguidos = 0
+            else:
+                # Si esto se repite mucho, la RPi no da para el FPS_OBJETIVO
+                # actual y hay que bajarlo - avisa una vez por racha en vez
+                # de en cada fotograma, para no volver a inundar la consola.
+                fotogramas_lentos_seguidos += 1
+                if fotogramas_lentos_seguidos == FPS_OBJETIVO * 3:
+                    print(f"Aviso: llevas ~3s seguidos mas lento que el "
+                          f"FPS_OBJETIVO ({FPS_OBJETIVO}) - considera bajarlo.")
     except KeyboardInterrupt:
         pass
     finally:
