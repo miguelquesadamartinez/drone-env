@@ -152,7 +152,11 @@ if __name__ == "__main__":
     main()
 
 
-# --- Unidad systemd de ejemplo, para sustituir a "drone-camera.service" ---
+# --- Unidad systemd (confirmado 21 sep: venv-ardupilot funciona bien
+# con opencv/picamera2, no hace falta tocar el venv ni usar el Python
+# del sistema). Se reutiliza el propio "drone-camera.service" que ya
+# arrancaba solo con la Raspberry - solo cambia el ExecStart, no hace
+# falta crear ni habilitar un servicio nuevo aparte:
 #
 # [Unit]
 # Description=Streaming de camara IA (deteccion de personas) hacia MediaMTX
@@ -168,9 +172,3 @@ if __name__ == "__main__":
 #
 # [Install]
 # WantedBy=multi-user.target
-#
-# OJO antes de activarlo (ver aviso en el chat): picamera2 suele
-# necesitar los paquetes del sistema (via apt), no siempre funciona
-# bien instalado solo dentro de un venv aislado - comprueba que
-# "venv-ardupilot" se creo con --system-site-packages, o usa
-# directamente /usr/bin/python3 en el ExecStart si no.
