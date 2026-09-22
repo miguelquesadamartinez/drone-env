@@ -33,7 +33,7 @@ from picamera2.devices.imx500 import IMX500, NetworkIntrinsics
 MODEL_PATH = "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
 
 PERSON_CLASS = 0   # indice de "person" en COCO (0-indexed en este modelo)
-THRESHOLD = 0.3    # confianza minima
+THRESHOLD = 0.6    # confianza minima
 
 ANCHO, ALTO = 640, 480
 # FPS de partida para el streaming. La inferencia en el IMX500 en si es
@@ -121,16 +121,16 @@ def main() -> None:
                     if score_f < THRESHOLD:
                         continue
                     cls_int = int(round(float(cls)))
+                    if cls_int != PERSON_CLASS:
+                        continue  # solo nos interesa pintar personas
                     y0, x0, y1, x1 = [float(v) for v in box]
                     px0, py0 = int(x0 * w), int(y0 * h)
                     px1, py1 = int(x1 * w), int(y1 * h)
-                    es_persona = cls_int == PERSON_CLASS
-                    color = (0, 255, 0) if es_persona else (0, 165, 255)
+                    color = (0, 255, 0)
                     cv2.rectangle(frame, (px0, py0), (px1, py1), color, 2)
-                    cv2.putText(frame, f"cls={cls_int} {score_f:.0%}", (px0, max(0, py0 - 8)),
+                    cv2.putText(frame, f"persona {score_f:.0%}", (px0, max(0, py0 - 8)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
-                    if es_persona:
-                        personas += 1
+                    personas += 1
                 # Solo se imprime un resumen cuando hay alguna persona -
                 # nada de un print por cada candidato de cada fotograma
                 # (eso era lo que inundaba la consola antes).
