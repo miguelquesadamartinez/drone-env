@@ -73,7 +73,7 @@ def _lanzar_ffmpeg() -> subprocess.Popen:
 
 def main() -> None:
     imx500 = IMX500(MODEL_PATH)
-    imx500.network_intrinsics = imx500.network_intrinsics or NetworkIntrinsics()
+    imx500.network_intrinsics or NetworkIntrinsics()
 
     picam2 = Picamera2(imx500.camera_num)
     config = picam2.create_preview_configuration(
