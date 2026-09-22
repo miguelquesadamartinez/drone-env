@@ -108,12 +108,10 @@ def main() -> None:
                 metadata = request.get_metadata()
 
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            h, w = frame.shape[:2]
 
             outputs = imx500.get_outputs(metadata, add_batch=True)
             if outputs is not None:
                 # outputs[0]=boxes(1,N,4)  outputs[1]=scores(1,N)  outputs[2]=classes(1,N)
-                # formato de caja normalizado: (y0, x0, y1, x1)
                 boxes, scores, classes = outputs[0][0], outputs[1][0], outputs[2][0]
                 personas = 0
                 for box, score, cls in zip(boxes, scores, classes):
@@ -123,11 +121,16 @@ def main() -> None:
                     cls_int = int(round(float(cls)))
                     if cls_int != PERSON_CLASS:
                         continue  # solo nos interesa pintar personas
-                    y0, x0, y1, x1 = [float(v) for v in box]
-                    px0, py0 = int(x0 * w), int(y0 * h)
-                    px1, py1 = int(x1 * w), int(y1 * h)
+                    # OJO, aqui estaba el bug del recuadro gigante: haciamos
+                    # x0*w / y0*h a mano asumiendo que la caja ya viene en la
+                    # proporcion del fotograma real (640x480). Pero el modelo
+                    # trabaja internamente en un cuadrado 320x320, asi que hay
+                    # que pasar la caja por convert_inference_coords() (funcion
+                    # oficial de picamera2/imx500) para que la reescale bien -
+                    # si no, sale estirada casi a pantalla completa.
+                    px0, py0, pw, ph = imx500.convert_inference_coords(box, metadata, picam2)
                     color = (0, 255, 0)
-                    cv2.rectangle(frame, (px0, py0), (px1, py1), color, 2)
+                    cv2.rectangle(frame, (px0, py0), (px0 + pw, py0 + ph), color, 2)
                     cv2.putText(frame, f"persona {score_f:.0%}", (px0, max(0, py0 - 8)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
                     personas += 1
