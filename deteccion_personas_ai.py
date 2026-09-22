@@ -73,7 +73,7 @@ def _lanzar_ffmpeg() -> subprocess.Popen:
 
 def main() -> None:
     imx500 = IMX500(MODEL_PATH)
-    imx500.network_intrinsics or NetworkIntrinsics()
+    imx500.network_intrinsics = imx500.network_intrinsics or NetworkIntrinsics()
 
     picam2 = Picamera2(imx500.camera_num)
     config = picam2.create_preview_configuration(
@@ -113,6 +113,18 @@ def main() -> None:
             if outputs is not None:
                 # outputs[0]=boxes(1,N,4)  outputs[1]=scores(1,N)  outputs[2]=classes(1,N)
                 boxes, scores, classes = outputs[0][0], outputs[1][0], outputs[2][0]
+                # SEGUNDA PARTE del bug del recuadro gigante: convert_inference_coords()
+                # espera la caja ya normalizada a [0,1]. Segun este modelo (lo indica su
+                # bbox_normalization empaquetado en el .rpk), puede venir en pixeles del
+                # propio input de la red (0-320) en vez de normalizada - si se pasa asi
+                # tal cual, sale multiplicada de mas y el recuadro cubre casi toda la
+                # imagen. Replicamos la misma normalizacion que usa el ejemplo oficial
+                # de picamera2/imx500 (imx500_object_detection_demo.py).
+                input_w, input_h = imx500.get_input_size()
+                if imx500.network_intrinsics.bbox_normalization:
+                    boxes = boxes / input_h
+                if imx500.network_intrinsics.bbox_order == "xy":
+                    boxes = boxes[:, [1, 0, 3, 2]]
                 personas = 0
                 for box, score, cls in zip(boxes, scores, classes):
                     score_f = float(score)
@@ -121,13 +133,6 @@ def main() -> None:
                     cls_int = int(round(float(cls)))
                     if cls_int != PERSON_CLASS:
                         continue  # solo nos interesa pintar personas
-                    # OJO, aqui estaba el bug del recuadro gigante: haciamos
-                    # x0*w / y0*h a mano asumiendo que la caja ya viene en la
-                    # proporcion del fotograma real (640x480). Pero el modelo
-                    # trabaja internamente en un cuadrado 320x320, asi que hay
-                    # que pasar la caja por convert_inference_coords() (funcion
-                    # oficial de picamera2/imx500) para que la reescale bien -
-                    # si no, sale estirada casi a pantalla completa.
                     px0, py0, pw, ph = imx500.convert_inference_coords(box, metadata, picam2)
                     color = (0, 255, 0)
                     cv2.rectangle(frame, (px0, py0), (px0 + pw, py0 + ph), color, 2)
